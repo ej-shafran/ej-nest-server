@@ -1,0 +1,453 @@
+#!/bin/bash
+
+# SETUP ARGS
+
+SCRIPT_ARGS=()
+TYPEORM=0
+MONGOOSE=0
+
+# UTILS
+
+formatted() {
+  echo "\x1b[32;1m$1\x1b[0m"
+}
+
+usage() {
+  echo ""
+  echo -e "$0 - Create a personalized $(formatted "NestJS") server"
+  echo ""
+  echo "Usage: $0 [options] [name]"
+  echo ""
+  echo "Options:"
+  echo -e "\t-h --help      Show this message"
+  echo -e "\t-m --mongoose  Add and setup Mongoose"
+  echo -e "\t-t --typeorm   Add and setup TypeORM (overrides $(formatted "--mongoose"))"
+}
+
+exit_abnormal() {
+  usage
+  exit 1
+}
+
+info() {
+  printf "\r  [ \033[00;34mINFO\033[0m ] %b\n" "$1"
+}
+
+query_user() {
+  printf "\r  [ \033[0;33m?\033[0m ] %b" "$1"
+}
+
+success() {
+  printf "\r\033[2K  [ \033[00;32mOK\033[0m ] %b\n" "$1"
+}
+
+fail() {
+  printf "\r\033[2K  [ \033[0;31mFAIL\033[0m ] %b\n" "$1"
+  echo ''
+  exit
+}
+
+# GET VERSION FROM NPM
+
+get_latest_version() {
+  npm search "$1" 2>/dev/null | sed '2q;d' | cut -d'|' -f5 | xargs
+}
+
+set_dep() {
+  local package version
+  package="$1"
+  version="$(get_latest_version "$package")"
+
+  info "Setting $(formatted "$package") to $(formatted "v$version")..."
+  npm pkg set dependencies."$package"="$version"
+}
+
+# GET FILE FROM GITHUB
+
+get_package_json() {
+  curl -s 'https://raw.githubusercontent.com/nestjs/schematics/master/src/lib/application/files/ts/package.json' 
+}
+
+# HARDCODED FILES
+
+get_gitignore() {
+  cat << EOF
+# compiled output
+/dist
+/node_modules
+
+# local environment variables
+.env*.local
+
+# Logs
+logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# OS
+.DS_Store
+
+# Tests
+/coverage
+/.nyc_output
+
+# IDEs and editors
+/.idea
+.project
+.classpath
+.c9/
+*.launch
+.settings/
+*.sublime-workspace
+
+# IDE - VSCode
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+EOF
+}
+
+get_tsconfig() {
+  cat << EOF
+{
+  "compilerOptions": {
+    "module": "commonjs",
+    "declaration": true,
+    "removeComments": true,
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+    "allowSyntheticDefaultImports": true,
+    "target": "es2017",
+    "sourceMap": true,
+    "outDir": "./dist",
+    "baseUrl": "./",
+    "incremental": true,
+    "skipLibCheck": true,
+    "strictNullChecks": false,
+    "noImplicitAny": false,
+    "strictBindCallApply": false,
+    "forceConsistentCasingInFileNames": false,
+    "noFallthroughCasesInSwitch": false
+  }
+}
+EOF
+}
+
+get_tsconfig_build() {
+  cat << EOF
+{
+  "extends": "./tsconfig.json",
+  "exclude": ["node_modules", "test", "dist", "**/*spec.ts"]
+}
+EOF
+}
+
+get_nestcli() {
+  cat << EOF
+{
+  "\$schema": "https://json.schemastore.org/nest-cli",
+  "collection": "@nestjs/schematics",
+  "sourceRoot": "src",
+  "compilerOptions": {
+    "deleteOutDir": true
+  },
+  "generateOptions": {
+    "spec": false
+  }
+}
+EOF
+}
+
+get_main() {
+  cat << EOF
+import { NestFactory } from "@nestjs/core";
+import { AppModule } from "./app.module";
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  await app.listen(8080);
+}
+bootstrap();
+EOF
+}
+
+get_additional_imports() {
+  if [ "$TYPEORM" -eq 1 ]; then
+    echo ''
+    echo 'import { TypeOrmModule } from "@nestjs/typeorm";'
+  elif [ "$MONGOOSE" -eq 1 ]; then
+    echo ''
+    echo 'import { MongooseModule } from "@nestjs/mongoose"';
+  fi
+}
+
+get_additional_modules() {
+  if [ "$TYPEORM" -eq 1 ]; then
+    echo ""
+    cat << EOF
+    TypeOrmModule.forRoot({
+      type: "mysql",
+      host: process.env.DB_HOST,
+      port: Number(process.env.DB_PORT),
+      database: process.env.DB_NAME,
+      username: process.env.DB_USERNAME,
+      password: process.env.DB_PASSWORD,
+      logging: process.env.TYPEORM_LOGGING?.toLowerCase() === "on",
+      synchronize: process.env.TYPEORM_SYNC?.toLowerCase() === "on",
+    
+      entities: ["dist/**/*.entity{.ts,.js}"],
+    }),
+EOF
+  elif [ "$MONGOOSE" -eq 1 ]; then
+    echo ""
+    cat << EOF
+    MongooseModule.forRoot(process.env.DB_URI, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+    }),
+EOF
+  fi
+}
+
+get_app_module() {
+  cat << EOF
+import { Module } from '@nestjs/common';
+import { ConfigModule } from "@nestjs/config";$(get_additional_imports)
+
+@Module({
+  imports: [
+    ConfigModule.forRoot({
+        isGlobal: true,
+        envFilePath: [
+          \`.env.\${process.env.NODE_ENV}\`,
+          \`.env.\${process.env.NODE_ENV}.local\`,
+        ],
+    }),$(get_additional_modules)
+  ],
+  controllers: [],
+  providers: [],
+})
+export class AppModule {}
+EOF
+}
+
+get_mongoose_env() {
+  local prod
+  prod="$1"
+
+  if [ "$prod" -eq 1 ]; then
+    echo 'DB_URI=""'
+  else
+    echo 'DB_URI="mongodb://localhost/dbName"'
+  fi
+}
+
+get_typeorm_env() {
+  local prod on_or_off
+  prod="$1"
+
+  if [ "$prod" -eq 1 ]; then
+    on_or_off="OFF"
+  else
+    on_or_off="ON"
+  fi
+
+  cat << EOF
+DB_PORT=3306
+DB_USERNAME=""
+DB_PASSWORD=""
+DB_NAME=""
+
+TYPEORM_LOGGING="$on_or_off"
+TYPEORM_SYNC="$on_or_off"
+EOF
+}
+
+get_env() {
+  local prod
+  prod="$1"
+
+  if [ "$TYPEORM" -eq 1 ]; then
+    get_typeorm_env "$prod"
+  elif [ "$MONGOOSE" -eq 1 ]; then
+    get_mongoose_env "$prod"
+  else
+    echo ''
+  fi
+}
+
+# PARSE ARGS
+
+check_long_opt() {
+  arg="$1"
+
+  case "$arg" in
+    help)
+      usage
+      exit 0
+      ;;
+    typeorm)
+      TYPEORM=1
+      ;;
+    mongoose)
+      MONGOOSE=1
+      ;;
+    *)
+      exit_abnormal
+      ;;
+  esac
+}
+
+check() {
+  while [ $OPTIND -le "$#" ]
+  do
+      if getopts ':tmh-:' option
+      then
+          case $option
+          in
+            -)
+              check_long_opt "$OPTARG"
+              ;;
+            h) 
+              usage
+              exit 0
+              ;;
+            t) 
+              TYPEORM=1
+              ;;
+            m)
+              MONGOOSE=1
+              ;;
+            ?)
+              exit_abnormal
+              ;;
+          esac
+      else
+          SCRIPT_ARGS+=("${!OPTIND}")
+          ((OPTIND++))
+      fi
+  done
+}
+
+main() {
+  check "$@"
+
+  name="${SCRIPT_ARGS[0]}"
+
+  if [ "$name" == "" ]; then
+    query_user "What directory should the server be created in? \x1b[33;1m"
+    read -r name
+    echo -e "\x1b[0m"
+  fi
+
+  if [ -d "$name" ]; then
+    fail "Cannot create $(formatted "$name") - directory exists..." || exit 1
+  fi
+  
+  info "Creating $(formatted "$name")..."
+  mkdir -p "./$name"
+  cd "./$name" || exit
+  
+  info "Getting $(formatted "package.json") from GitHub..."
+  get_package_json > "./package.json"
+  
+  unused_scripts=(
+      format
+      lint
+      test
+      test:watch
+      test:cov
+      test:debug
+      test:e2e
+  )
+  
+  info "Removing unused scripts..."
+  for script in "${unused_scripts[@]}"; do
+    npm pkg delete scripts."$script"
+  done
+  
+  unused_dev_deps=(
+      @nestjs/testing
+      @types/jest
+      @types/supertest
+      @typescript-eslint/eslint-plugin
+      @typescript-eslint/parser
+      eslint
+      eslint-config-prettier
+      eslint-plugin-prettier
+      jest
+      prettier
+      supertest
+      ts-jest
+  )
+  
+  info "Removing unused devDependencies..."
+  for dev_dep in "${unused_dev_deps[@]}"; do
+    npm pkg delete devDependencies."$dev_dep"
+  done
+  
+  npm pkg delete jest
+
+  set_dep "@nestjs/config"
+
+  if [ "$TYPEORM" -eq 1 ]; then
+    set_dep "typeorm"
+    set_dep "@nestjs/typeorm"
+  elif [ "$MONGOOSE" -eq 1 ]; then
+    set_dep "mongoose"
+    set_dep "@nestjs/mongoose"
+  fi
+
+  info "Adding $(formatted ".env") files..."
+  get_env 0 > './.env.development'
+  get_env 0 > './.env.debug'
+  get_env 1 > './.env.production'
+  
+  info "Updating scripts..."
+  npm pkg set \
+    scripts.build="export NODE_ENV=production && nest build" \
+    scripts.start="export NODE_ENV=production && nest start" \
+    scripts.start:dev="export NODE_ENV=development && nest start --watch" \
+    scripts.start:debug="export NODE_ENV=debug && nest start --debug --watch" \
+    scripts.start:prod="export NODE_ENV=production && node dist/main" \
+
+  info "Updating $(formatted "package.json") values..."
+  npm pkg set version="1.0.0"
+  npm pkg set description=null --json
+  npm pkg set author=null --json
+  npm pkg set name="$name" 
+  
+  info "Adding miscallaneous files..."
+  get_gitignore > "./.gitignore"
+  get_tsconfig > "./tsconfig.json"
+  get_tsconfig_build > "./tsconfig.build.json"
+  get_nestcli > "./nest-cli.json"
+  
+  info "Adding $(formatted "README")..."
+  echo "# $name" > "./README.md"
+  
+  info "Creating $(formatted "$name/src")..."
+  mkdir -p "./src"
+  cd "./src" || exit
+  
+  info "Adding $(formatted "main.ts") and $(formatted "app.module.ts")..."
+  get_main > "./main.ts"
+  get_app_module > "./app.module.ts"
+  
+  cd "../../" || exit
+  
+  echo ""
+  success "Finished!"
+  success "You can now run:"
+  success "  $(formatted "cd $name")"
+  success "  $(formatted "npm install")"
+  success "to install the necessary dependencies!"
+}
+
+main "$@"

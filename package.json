@@ -1,0 +1,8 @@
+{
+  "name": "ej-nest",
+  "version": "1.0.0",
+  "description": "Create a personalized NestJS server",
+  "bin": "./ej-nest",
+  "author": "ej shafran",
+  "license": "ISC"
+}

@@ -1,5 +1,7 @@
 #!/bin/bash
 
+SCRIPT_NAME=$(basename "$0")
+
 # SETUP ARGS
 
 SCRIPT_ARGS=()
@@ -14,9 +16,9 @@ formatted() {
 
 usage() {
   echo ""
-  echo -e "$0 - Create a personalized $(formatted "NestJS") server"
+  echo -e "$SCRIPT_NAME - Create a personalized $(formatted "NestJS") server"
   echo ""
-  echo "Usage: $0 [options] [name]"
+  echo "Usage: $SCRIPT_NAME [options] [name]"
   echo ""
   echo "Options:"
   echo -e "\t-h --help      Show this message"
